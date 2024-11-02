@@ -1,2 +1,2 @@
 # mem
-Recreating memory allocation in C
+Recreating a memory allocator in C
