@@ -15,17 +15,22 @@ typedef struct memBlock memBlock;
 
 memBlock * memHead = NULL;
 
+void initBlock(memBlock * b, int size, memBlock * n) {
+    b->size = size;
+    b->free = true;
+    b->next = n;
+    b->data = (char*)(b + sizeof(memBlock));
+}
+
 /* Initialize memory pool */
 int Mem_init (){
     if (memHead)
         return 0;
 
     memHead = (memBlock *)memPool;
-    memHead->size = MEM_POOL_CAP - sizeof(memBlock);
-    memHead->free = true;
-    memHead->next = NULL;
-    memHead->data = memPool + sizeof(memBlock);
-
+    initBlock(  memHead, 
+                MEM_POOL_CAP - sizeof(memBlock), 
+                NULL);
     return 0;
 }
 
@@ -70,10 +75,9 @@ char * fit (int size, memBlock* block){
         return allocate(block);
 
     memBlock * newBlock = (memBlock *) block->data + size;
-    newBlock->size = block->size - size - sizeof(memBlock);
-    newBlock->free = true;
-    newBlock->next = block->next;
-    newBlock->data = block->data + size + sizeof(memBlock);
+    initBlock(  newBlock, 
+                block->size - size - sizeof(memBlock), 
+                block->next);
 
     block->size = size;
     block->next = newBlock;
@@ -97,14 +101,11 @@ void * Mem_alloc (int size){
 }
 
 void coalesce (memBlock *b){
-    printf("coalesce(%d->%d) ", b->size, b->next->size);
-
     b->size += b->next->size + sizeof(memBlock);
     b->next = b->next->next;
 }
 
 void coalescer (){
-    printf("\ncoalescer: ");
     memBlock * cur = memHead;
     while (cur->next){
         if (cur->free && cur->next->free){
@@ -113,7 +114,6 @@ void coalescer (){
         }
         cur = cur->next;
     }
-    printf("\n\n");
 }
 
 bool valid(void *b) {
@@ -131,15 +131,21 @@ bool valid(void *b) {
     return false;
 }
 
+void freeBlock(memBlock *b) {
+    b->free = true;
+}
+
 /* Free a given pointer to memory */
 void Mem_free (void *b){
-    if (memHead == NULL)
+    if (memHead == NULL) {
         Mem_init();
+        return;
+    }
 
     if (!valid(b))
         return;
 
     memBlock *block = b - sizeof(memBlock);
-    block->free = true;
+    freeBlock(block);
     coalescer();
 }
