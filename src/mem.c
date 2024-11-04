@@ -1,151 +1,175 @@
+#include <stddef.h>
+
 #include <stdio.h>
-#include <stdbool.h>
 
-#define MEM_POOL_CAP 4096
-char memPool[MEM_POOL_CAP];
+#define MEM_POOL_SIZE 4096
+char _pool[MEM_POOL_SIZE];
 
-struct memBlock {
+struct _block {
     int size;
-    bool free;
-    struct memBlock *next;
-    char *data;
+    char free;
+    void *data;
 };
 
-typedef struct memBlock memBlock;
+struct mem_stats {
+    int total_blocks;
+    int active_blocks;
+    int bytes_in_use;
+};
 
-memBlock * memHead = NULL;
+typedef struct _block _block;
 
-void initBlock(memBlock * b, int size, memBlock * n) {
-    b->size = size;
-    b->free = true;
-    b->next = n;
-    b->data = (char*)(b + sizeof(memBlock));
+char _pool_initialized = 0;
+int _total_blocks = 0;
+int _active_blocks = 0;
+int _bytes_in_use = 0;
+
+
+void
+_print_mem (){
+    _block * cur = (_block *) _pool;
+    while (cur < (_block *) (_pool + MEM_POOL_SIZE)){
+        printf("[%p](%lx:%d:%d)->", cur, cur->size + sizeof(_block), cur->size, cur->free);
+        cur = (_block *) &cur->data + cur->size;
+    }
+    printf("[%p](END)\n", _pool+MEM_POOL_SIZE);
+
 }
 
-/* Initialize memory pool */
-int Mem_init (){
-    if (memHead)
-        return 0;
+void
+_init_block (_block * b, int size){
+    b->size = size - sizeof(_block);
+    b->free = 1;
 
-    memHead = (memBlock *)memPool;
-    initBlock(  memHead, 
-                MEM_POOL_CAP - sizeof(memBlock), 
-                NULL);
-    return 0;
+    _total_blocks ++;
+    _bytes_in_use += sizeof(_block);
 }
 
-/* Print the state of the memory pool */
-void Mem_print (){
-    if (memHead == NULL) {
-        printf("Pool uninitialized...");
+
+void
+_init_pool (void){
+    if (_pool_initialized != 0)
         return;
+
+    _init_block( (_block*) _pool,
+                 MEM_POOL_SIZE);
+
+    _pool_initialized = 1;
+    return;
+}
+
+
+void
+_allocate (_block * b){
+    _active_blocks ++;
+    _bytes_in_use += b->size;
+    b->free = 0;
+}
+
+
+void
+_free_block (_block *b){
+    _active_blocks --;
+    _bytes_in_use -= b->size;
+    b->free = 1;
+}
+
+
+void *
+_align (int size, _block* b){
+    if (size == b->size) {
+        _allocate(b);
+        return &b->data;
     }
 
-    printf("Pool:\n");
-    memBlock * cur = memHead;
-    printf("[%d:%d](%p)->", cur->size, cur->free, cur->data);
-    int numBlocks = 1;
-    int totMemAlloced = 0;
-    if (!cur->free) {
-        totMemAlloced += cur->size;
+    if (b->size - size <= sizeof(_block) + 1) {
+        _allocate(b);
+        return &b->data;
     }
 
-    while (cur->next) {
-        cur = cur->next;
-        printf("[%d:%d](%p)->", cur->size, cur->free, cur->data);
-        numBlocks += 1;
-        if (!cur->free) {
-            totMemAlloced += cur->size;
-        }
-    }
-    printf("NULL\n");
-    printf("num blocks: %d\nalloced: %d / %d\n\n", numBlocks, totMemAlloced, MEM_POOL_CAP);
+    _print_mem();
+    _block * new_block = (_block *) &b->data + size;
+    _init_block( new_block, 
+                 b->size - size);
+
+    b->size = size;
+
+    _allocate(b);
+    return &b->data;
 }
 
-char * allocate (memBlock* block){
-    block->free = false;
-    return block->data;
+
+void
+_coalesce (_block *b){
 }
 
-char * fit (int size, memBlock* block){
-    if (size == block->size)
-        return allocate(block);
 
-    if (block->size - size <= sizeof(memBlock))
-        return allocate(block);
-
-    memBlock * newBlock = (memBlock *) block->data + size;
-    initBlock(  newBlock, 
-                block->size - size - sizeof(memBlock), 
-                block->next);
-
-    block->size = size;
-    block->next = newBlock;
-
-    return allocate(block);
+void
+_coalescer (void){
 }
 
-/*  Allocate `size` bytes of memory from the pool,
-    Returns a pointer to the newly allocated memory. */
-void * Mem_alloc (int size){
-    if (memHead == NULL)
-        Mem_init();
 
-    memBlock * cur = memHead;
-    while (cur){
-        if (cur->free && cur->size >= size)
-            return (void *) fit(size, cur);
-        cur = cur->next;
-    }
-    return NULL;
-}
+int
+_valid (void *b){
+    if ((void*)_pool > b || (void*)_pool + MEM_POOL_SIZE < b)
+        return -1;
 
-void coalesce (memBlock *b){
-    b->size += b->next->size + sizeof(memBlock);
-    b->next = b->next->next;
-}
-
-void coalescer (){
-    memBlock * cur = memHead;
-    while (cur->next){
-        if (cur->free && cur->next->free){
-            coalesce(cur);
-            continue;
-        }
-        cur = cur->next;
-    }
-}
-
-bool valid(void *b) {
-    if ((void*)memPool > b || (void*)memPool + MEM_POOL_CAP < b)
-        return false;
-
+    /*
     memBlock *block = b - sizeof(memBlock);
     memBlock * cur = memHead;
     while (cur){
         if (cur == block)
-            return true;
+            return 0;
         cur = cur->next;
     }
+    */
 
-    return false;
+    return -1;
 }
 
-void freeBlock(memBlock *b) {
-    b->free = true;
-}
 
-/* Free a given pointer to memory */
-void Mem_free (void *b){
-    if (memHead == NULL) {
-        Mem_init();
-        return;
+void *
+mem_alloc (int size){
+    if (_pool_initialized == 0)
+        _init_pool();
+
+    if (MEM_POOL_SIZE - _bytes_in_use < size)
+        return NULL;
+
+    _block * cur = (_block *) _pool;
+    while (cur < (_block *) (_pool + MEM_POOL_SIZE)){
+        if (cur->free && cur->size >= size) {
+            return (void *) _align(size, cur);
+        }
+        cur = (_block *) &cur->data + cur->size;
     }
+    return NULL;
+}
 
-    if (!valid(b))
+
+void
+mem_free (void *b){
+    if (_pool_initialized == 0)
         return;
+    /*
+    if (-1 == valid(b))
+        return -1;
 
     memBlock *block = b - sizeof(memBlock);
-    freeBlock(block);
-    coalescer();
+    free_block(block);
+    */
+    return;
 }
+
+
+void
+mem_stat (struct mem_stats * s){
+    if (_pool_initialized == 0)
+        _init_pool();
+
+    s->total_blocks = _total_blocks;
+    s->active_blocks = _active_blocks;
+    s->bytes_in_use = _bytes_in_use;
+}
+
+
