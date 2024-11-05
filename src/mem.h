@@ -8,6 +8,8 @@ struct mem_stats {
     int bytes_in_use;
 };
 
+int mem_init ();
+void mem_destroy();
 void * mem_alloc (int size);
 void mem_free (void *b);
 void mem_stat (struct mem_stats * s);
